@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Trip Cost Estimator + Itinerary Generator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    html,body{background:#0F1A30;color:#fff}
+    .card{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.15)}
+    .pill{border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.06)}
+    .accent{color:#FFA500}
+    .btn{border-radius:9999px;padding:0.6rem 1rem;font-weight:600}
+    .btn-primary{background:#FFA500;color:#000}
+    .btn-outline{border:1px solid rgba(255,255,255,0.3)}
+    .grid-3{display:grid;grid-template-columns:repeat(1,minmax(0,1fr));gap:1rem}
+    @media(min-width:1024px){ .grid-3{grid-template-columns:repeat(3,minmax(0,1fr));}}
+    @media print{
+      .no-print{display:none!important}
+      body{background:#fff;color:#000}
+      .card{background:#fff;border:1px solid #ddd}
+      a{color:#000;text-decoration:underline}
+    }
+  </style>
+</head>
+<body class="min-h-screen">
+  <header class="no-print sticky top-0 z-10 backdrop-blur bg-[#0F1A30]/70 border-b border-white/10">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+      <h1 class="text-lg sm:text-xl font-semibold">Trip Cost Estimator + Itinerary Generator</h1>
+      <div class="text-xs opacity-80">Live data • No scraping • Fast</div>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-4 py-6">
+    <section class="card rounded-2xl p-4 sm:p-6">
+      <h2 class="text-lg sm:text-xl font-semibold mb-2">Plan your trip</h2>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div>
+          <label class="block text-sm mb-1">Origin (IATA or search)</label>
+          <div class="flex gap-2">
+            <input id="origin" placeholder="DEL" class="w-full rounded-lg bg-white/5 border border-white/15 px-3 py-2" />
+            <button id="searchOrigin" class="btn btn-outline">Find</button>
+          </div>
+          <div id="originResults" class="mt-1 text-xs"></div>
+        </div>
+        <div>
+          <label class="block text-sm mb-1">Destination (IATA or search)</label>
+          <div class="flex gap-2">
+            <input id="dest" placeholder="BKK" class="w-full rounded-lg bg-white/5 border border-white/15 px-3 py-2" />
+            <button id="searchDest" class="btn btn-outline">Find</button>
+          </div>
+          <div id="destResults" class="mt-1 text-xs"></div>
+        </div>
+        <div>
+          <label class="block text-sm mb-1">Depart (DD/MM/YYYY)</label>
+          <input id="depart" placeholder="13/09/2025" class="w-full rounded-lg bg-white/5 border border-white/15 px-3 py-2" />
+        </div>
+        <div>
+          <label class="block text-sm mb-1">Return (optional, DD/MM/YYYY)</label>
+          <input id="returnDate" placeholder="18/09/2025" class="w-full rounded-lg bg-white/5 border border-white/15 px-3 py-2" />
+        </div>
+        <div>
+          <label class="block text-sm mb-1">Travellers</label>
+          <input id="travellers" type="number" min="1" value="2" class="w-full rounded-lg bg-white/5 border border-white/15 px-3 py-2" />
+        </div>
+        <div>
+          <label class="block text-sm mb-1">Budget</label>
+          <select id="budget" class="w-full rounded-lg bg-white/5 border border-white/15 px-3 py-2">
+            <option value="low">Low</option>
+            <option value="mid" selected>Mid</option>
+            <option value="high">High</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm mb-1">Style</label>
+          <select id="style" class="w-full rounded-lg bg-white/5 border border-white/15 px-3 py-2">
+            <option value="touristy" selected>Touristy</option>
+            <option value="authentic">Authentic</option>
+            <option value="family">Family</option>
+            <option value="luxury">Luxury</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm mb-1">Currency</label>
+          <select id="currency" class="w-full rounded-lg bg-white/5 border border-white/15 px-3 py-2">
+            <option value="INR" selected>INR</option>
+            <option value="USD">USD</option>
+            <option value="EUR">EUR</option>
+          </select>
+        </div>
+        <div class="sm:col-span-2 lg:col-span-3">
+          <label class="block text-sm mb-1">(Optional) Must-see places (one per line, use “| morning/afternoon/evening” to fix slot)</label>
+          <textarea id="must" rows="4" class="w-full rounded-lg bg-white/5 border border-white/15 px-3 py-2" placeholder="Grand Palace | morning&#10;Chatuchak Market | afternoon&#10;Mahanakhon Skywalk | evening"></textarea>
+        </div>
+      </div>
+      <div class="mt-4 flex flex-wrap gap-3">
+        <button id="go" class="btn btn-primary">Generate Plan</button>
+        <button id="print" class="btn btn-outline">Print / Save PDF</button>
+        <div id="msg" class="self-center text-xs opacity-80"></div>
+      </div>
+    </section>
+
+    <section id="summary" class="mt-6 grid-3"></section>
+    <section id="itinerary" class="mt-6 space-y-4"></section>
+  </main>
+
+  <script>
+    const $ = id => document.getElementById(id);
+
+    async function fetchJSON(url){
+      const r = await fetch(url);
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    }
+
+    function renderAirports(list, targetInput){
+      return list.map(l=>{
+        const btn = document.createElement('button');
+        btn.className = "pill px-2 py-1 rounded text-xs mr-1 mb-1";
+        btn.textContent = `${l.code} · ${l.city || l.name}, ${l.country}`;
+        btn.onclick = ()=> { targetInput.value = l.code; event.target.parentElement.innerHTML=""; };
+        return btn;
+      });
+    }
+
+    $("searchOrigin").onclick = async () => {
+      const q = $("origin").value || "";
+      const out = $("originResults"); out.innerHTML = "Searching…";
+      try{
+        const j = await fetchJSON("/api/kiwiLocations?q="+encodeURIComponent(q));
+        out.innerHTML = "";
+        renderAirports(j.results || [], $("origin")).forEach(b=>out.appendChild(b));
+      }catch(e){ out.innerHTML = "Error: " + e.message; }
+    };
+    $("searchDest").onclick = async () => {
+      const q = $("dest").value || "";
+      const out = $("destResults"); out.innerHTML = "Searching…";
+      try{
+        const j = await fetchJSON("/api/kiwiLocations?q="+encodeURIComponent(q));
+        out.innerHTML = "";
+        renderAirports(j.results || [], $("dest")).forEach(b=>out.appendChild(b));
+      }catch(e){ out.innerHTML = "Error: " + e.message; }
+    };
+
+    function parseList(text){
+      return text.split("\n").map(s=>s.trim()).filter(Boolean).map(line=>{
+        const [name, rawSlot] = line.split("|").map(s=>s?.trim());
+        const slot = (rawSlot||"").toLowerCase();
+        return { name, slot: ["morning","afternoon","evening"].includes(slot) ? slot : null };
+      });
+    }
+
+    function estimateFoodFromPriceLevels(levels, travellers, days, currency="INR"){
+      // Map price_level (0–4) to per-meal bands (rough). Adjust later by FX.
+      const perMealUSD = { 0: 4, 1: 7, 2: 12, 3: 25, 4: 45 };
+      const avg = levels.length ? (levels.reduce((a,b)=>a+b,0)/levels.length) : 2;
+      const perMeal = perMealUSD[Math.round(avg)] || 12;
+      const mealsPerDay = 2; // breakfast often included; tweakable
+      const totalMeals = travellers * days * mealsPerDay;
+      return { perMealUSD: perMeal, avgLevel: avg, meals: totalMeals };
+    }
+
+    function buildItinerary(pois, days, mustList){
+      const slots = ["morning","afternoon","evening"];
+      const plan = Array.from({length: days}, () => []);
+      // Place must with fixed slots first
+      for(const m of mustList){
+        if(!m.slot) continue;
+        for(let d=0; d<days; d++){
+          if(!plan[d].some(x=>x.slot===m.slot)){
+            plan[d].push({slot:m.slot, name:m.name});
+            break;
+          }
+        }
+      }
+      // Create a pool from POIs (sorted by rating & reviews)
+      const pool = [...pois].sort((a,b)=> (b.rating||0)-(a.rating||0) || (b.user_ratings_total||0)-(a.user_ratings_total||0));
+      const used = new Set(plan.flat().map(x=>x.name));
+      // Fill remaining slots day by day
+      for(let d=0; d<days; d++){
+        for(const slot of slots){
+          if(plan[d].some(x=>x.slot===slot)) continue;
+          const pick = pool.find(p=>!used.has(p.name));
+          if(pick){
+            plan[d].push({slot, name: pick.name});
+            used.add(pick.name);
+          }
+        }
+        plan[d].sort((a,b)=> slots.indexOf(a.slot)-slots.indexOf(b.slot));
+      }
+      return plan;
+    }
+
+    async function go(){
+      const origin = $("origin").value.trim();
+      const dest = $("dest").value.trim();
+      const depart = $("depart").value.trim();
+      const returnDate = $("returnDate").value.trim();
+      const travellers = Math.max(1, Number($("travellers").value||1));
+      const budget = $("budget").value;
+      const style = $("style").value;
+      const currency = $("currency").value;
+      const days = returnDate ? Math.max(1, Math.round((parseDate(returnDate) - parseDate(depart))/(1000*3600*24))) : 5;
+
+      $("msg").textContent = "Fetching live data…";
+
+      // 1) Flights
+      let flights = null;
+      try{
+        flights = await fetchJSON(`/api/flights?origin=${encodeURIComponent(origin)}&dest=${encodeURIComponent(dest)}&depart=${encodeURIComponent(depart)}&returnDate=${encodeURIComponent(returnDate)}&adults=${travellers}&currency=${currency}`);
+      }catch(e){}
+
+      // 2) Hotels baseline
+      let hotels = null;
+      try{
+        hotels = await fetchJSON(`/api/hotels?city=${encodeURIComponent(dest)}&checkIn=${fmtISO(depart)}&checkOut=${fmtISO(returnDate || depart)}&adults=${travellers}`);
+      }catch(e){}
+
+      // 3) Restaurants (for food estimate)
+      let restaurants = null;
+      try{
+        restaurants = await fetchJSON(`/api/placesRestaurants?city=${encodeURIComponent(dest)}`);
+      }catch(e){}
+
+      // 4) POIs for itinerary
+      let pois = null;
+      try{
+        pois = await fetchJSON(`/api/places?q=${encodeURIComponent("things to do in " + dest)}`);
+      }catch(e){}
+
+      // 5) Currency conversion if hotels are USD
+      let fx = { rates: {[currency]: 1}, base: currency };
+      if ((hotels?.currency || "USD") !== currency){
+        try{
+          const ex = await fetchJSON(`/api/exchange?base=${hotels?.currency || "USD"}&symbols=${currency}`);
+          fx = ex;
+        }catch(e){}
+      }
+
+      // Compute estimates
+      const flightBaseline = (flights?.offers?.cheapest?.price || 0) * travellers;
+      // Hotel tiers in USD → convert
+      let tierUSD = null;
+      if (hotels?.tiers){
+        const tierKey = budget === "low" ? "3" : budget === "mid" ? "4" : "5";
+        tierUSD = hotels.tiers[tierKey] || null;
+      }
+      const rate = fx?.rates?.[currency] || 1;
+      const hotelPerNight = tierUSD ? Math.round(tierUSD * rate) : (budget==="low"?2500:budget==="mid"?6000:12000);
+      const rooms = Math.ceil(travellers/2);
+      const nights = Math.max(1, days);
+      const hotelTotal = hotelPerNight * nights * rooms;
+
+      // Food estimate from price levels
+      const levels = (restaurants?.results || []).map(r=>r.price_level).filter(x=>x!==undefined&&x!==null);
+      const food = estimateFoodFromPriceLevels(levels, travellers, nights, currency);
+      const foodPerMeal = Math.round(food.perMealUSD * rate);
+      const foodTotal = foodPerMeal * food.meals;
+
+      // Activities buffer
+      const activityPerDay = budget==="low"? 800 : budget==="mid" ? 1500 : 3000;
+      const activitiesTotal = activityPerDay * nights * travellers;
+
+      const tripTotal = Math.round(flightBaseline + hotelTotal + foodTotal + activitiesTotal);
+
+      // Render summary
+      const S = $("summary"); S.innerHTML = "";
+      const fmt = n => new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(n);
+      const card = (title, body) => `<div class="card rounded-2xl p-4"><div class="text-sm opacity-80">${title}</div><div class="mt-2 text-lg font-semibold">${body}</div></div>`;
+      S.innerHTML = `
+        ${card("Flight baseline (cheapest)", flights?.offers?.cheapest?.price ? fmt(flights.offers.cheapest.price*travellers) : "—")}
+        ${card("Hotel baseline / night (tier by budget)", hotelPerNight ? fmt(hotelPerNight) + ` <span class="text-xs opacity-70">× ${rooms} room(s) × ${nights} night(s)</span>` : "—")}
+        ${card("Food estimate", (foodTotal? fmt(foodTotal) : "—") + ` <div class="text-xs opacity-70 mt-1">~${food.meals} meals @ ~${fmt(foodPerMeal)} each</div>`)}
+      `;
+      const totalBar = document.createElement("div");
+      totalBar.className = "card rounded-2xl p-4 lg:col-span-3";
+      totalBar.innerHTML = `<div class="flex items-center justify-between">
+        <div class="text-sm opacity-80">Estimated total</div>
+        <div class="text-2xl font-bold accent">${fmt(tripTotal)}</div>
+      </div>
+      <div class="text-xs opacity-70 mt-1">Indicative only. Prices refresh as providers update.</div>`;
+      S.appendChild(totalBar);
+
+      // Build itinerary
+      const mustList = parseList($("must").value);
+      const plan = buildItinerary((pois?.results || []), nights, mustList);
+      const IT = $("itinerary"); IT.innerHTML = "";
+      plan.forEach((day, i) => {
+        const div = document.createElement("div");
+        div.className = "card rounded-2xl p-4";
+        div.innerHTML = `<div class="font-semibold mb-1">Day ${i+1}</div>
+          <ul class="space-y-1">${day.map(b=>`<li><span class="opacity-80 capitalize">${b.slot}:</span> ${b.name}</li>`).join("")}</ul>`;
+        IT.appendChild(div);
+      });
+
+      $("msg").textContent = "";
+    }
+
+    function parseDate(ddmmyyyy){
+      const [d,m,y] = ddmmyyyy.split("/").map(Number);
+      return new Date(y, (m-1), d);
+    }
+    function fmtISO(ddmmyyyy){
+      if (!ddmmyyyy) return "";
+      const dt = parseDate(ddmmyyyy);
+      const yyyy = dt.getFullYear();
+      const mm = String(dt.getMonth()+1).padStart(2,"0");
+      const dd = String(dt.getDate()).padStart(2,"0");
+      return `${yyyy}-${mm}-${dd}`;
+    }
+
+    $("go").onclick = go;
+    $("print").onclick = () => window.print();
+  </script>
+</body>
+</html>
